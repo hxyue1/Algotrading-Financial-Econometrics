@@ -254,7 +254,7 @@ qqline(vaf_std_resids,col = "steelblue", lwd = 2)
 
 ```
 
-Definitely in improvement but still problems in the left tail, let's trying using allowing for skewness in the student's t
+Definitely in improvement but still problems in the left tail, let's try the skewed student's-t distribution.
 
 ```{r}
 vaf_returns <- vaf$LogReturn[2:nrow(vaf)]
@@ -280,15 +280,47 @@ qqskewhyp(vaf_std_resids$vaf_std_resids, mu=0.1620,delta=1.4409,beta=-0.1724, nu
 QQplot looks very good if we use MLE estimates for the Skew Student's-t distribution, however, they do not seem to correspond to the GARCH model estimates. Let's test with simulation.
 
 ```{r}
-sim = ugarchsim(vaf_gjr_garch_fit,n.sim=2500)
+sim = ugarchsim(vaf_gjrgarch_fit,n.sim=2500)
 sim_std_resids = sim@simulation[["residSim"]]/sim@simulation[["sigmaSim"]]
 skewhypFit(sim_std_resids)
 ```
 
-Estimated parameters from simulated model seem pretty consistent with empirical values. Let's go with the skewed Student's-t distribution for the errors.
+Estimated parameters from simulated model seem reasonably consistent with empirical values. Let's go with the skewed Student's-t distribution for the errors.
 
-Ok, in that case what does the shape and skew parameter correspond to in the estimation output?
+But, what does the shape (4.273049) and skew (0.887297) parameter correspond to in the estimation output?
 
+In "Introduction to the rugarch package" on page 15, we may have a clue. It states that the package performs estimation using the $(\zeta,\rho)$ parameterisation and then transforms them into the $(\alpha, \beta, \delta, \mu)$ parameterisation.
+
+```{r}
+
+ghyptransform(mu=0,sigma=1,shape=4.273049,skew=0.887297)
+```
+
+The transformed parameters do not seem consistent with the ML estimates. Even though the skewed student's-t distribution is a special case of the generalised hyperbolic distribution, it doesn't seem that the ghyptransform can be directly applied in this case. I'm not going to try reconciling it any further so we'll try the ghyp distribution instead.
+
+```{r}
+vaf_returns <- vaf$LogReturn[2:nrow(vaf)]
+daily_sd <- sqrt((vaf_returns-mean(vaf_returns))^2)
+vaf_gjrgarch_spec <- ugarchspec(variance.model=list(model="gjrGARCH"),distribution.model="ghyp")
+
+vaf_gjrgarch_fit <-ugarchfit(vaf_returns,spec=vaf_gjrgarch_spec)
+vaf_std_resids <-residuals(vaf_gjrgarch_fit)/vaf_gjrgarch_fit@fit[["sigma"]]
+```
+
+```{r}
+library(ghyp)
+vaf_std_resids <- data.frame(vaf_std_resids)
+rownames(vaf_std_resids) <- c()
+
+s_resids <-vaf_std_resids$vaf_std_resids
+params <- ghyptransform(mu=mean(s_resids),sigma=sd(s_resids),shape=0.440242,skew=-0.453833,lambda=-1.937147)
+
+s_resids_ghyp <- ghyp.ad(lambda=-1.937147,alpha=params[1,4],delta=params[1,2],beta=params[1,3],mu=params[1,1])
+
+qqghyp(s_resids_ghyp,s_resids,gaussian=FALSE)
+```
+
+Does a better job of capturing the two most extreme values compared to the skewed student's-t, but for the less extreme values in the left tail, not as good. Let's move on to the next series.
 
 
 ##VAP
@@ -312,7 +344,7 @@ shapiro.test(vap_std_resids$vap_std_resids)
 
 ```
 
-QQPlot looks pretty good, but Shapiro-Wilks test still strongly rejects normality. Let's try student's t distribution.
+QQPlot looks pretty good, but Shapiro-Wilks test still strongly rejects normality. Let's try a student's t distribution.
 
 ```{r}
 
@@ -336,7 +368,7 @@ shapiro.test(vap_std_resids$vap_std_resids)
 
 ```
 
-Student's t distribution seems to be an even better fit, judging by the QQPlot. One extreme value though in the left tail.
+Student's t distribution seems to be an even better fit, judging by the QQPlot. One extreme value though in the left tail and underdispersion in the right tail. This seems to be good enough.
 
 ##VAS
 ```{r}
@@ -376,13 +408,39 @@ hist(vas_std_resids$vas_std_resids)
 qqt(vas_std_resids$vas_std_resids, df=9.533537)
 qqline(vas_std_resids, col = "steelblue", lwd = 2)
 
-shapiro.test(vas_std_resids$vas_std_resids)
 ```
+
+Underdispersion in the right tail, let's use the ghyp distribution to model for asymmetry. 
+
+
+```{r}
+vas_returns <- vas$LogReturn[2:nrow(vas)]
+daily_sd <- sqrt((vas_returns-mean(vas_returns))^2)
+vas_gjrgarch_spec <- ugarchspec(variance.model=list(model="gjrGARCH"),distribution.model="ghyp")
+
+vas_gjrgarch_fit <-ugarchfit(vas_returns,spec=vas_gjrgarch_spec)
+vas_std_resids <-residuals(vas_gjrgarch_fit)/vas_gjrgarch_fit@fit[["sigma"]]
+```
+
+```{r}
+vas_std_resids <- data.frame(vas_std_resids)
+rownames(vas_std_resids) <- c()
+
+s_resids <-vas_std_resids$vas_std_resids
+params <- ghyptransform(mu=mean(s_resids),sigma=sd(s_resids),shape=4.011653,skew=-0.323776,lambda=-1.734349)
+
+s_resids_ghyp <- ghyp.ad(lambda=-1.734349,alpha=params[1,4],delta=params[1,2],beta=params[1,3],mu=params[1,1])
+
+qqghyp(s_resids_ghyp,s_resids,gaussian=FALSE)
+```
+
+Superb fit. 
+
 ##VGS
 
 ```{r}
 vgs_returns <- vgs$LogReturn[2:nrow(vgs)]
-vgs_gjrgarch_spec <- ugarchspec(variance.model=list(model="gjrGARCH"),distribution.model="std")
+vgs_gjrgarch_spec <- ugarchspec(variance.model=list(model="gjrGARCH"))
 
 vgs_gjrgarch_fit <-ugarchfit(vgs_returns,spec=vgs_gjrgarch_spec)
 vgs_std_resids <-residuals(vgs_gjrgarch_fit)/vgs_gjrgarch_fit@fit[["sigma"]]
@@ -390,13 +448,57 @@ vgs_std_resids <-residuals(vgs_gjrgarch_fit)/vgs_gjrgarch_fit@fit[["sigma"]]
 
 ```{r}
 vgs_std_resids <- data.frame(vgs_std_resids)
+rownames(vgs_std_resids) <- c()
+
 hist(vgs_std_resids$vgs_std_resids)
 qqnorm(vgs_std_resids$vgs_std_resids)
 qqline(vgs_std_resids, col = "steelblue", lwd = 2)
-qqt(vgs_std_resids,df=5.849125)
-qqline(vgs_std_resids, col = "steelblue", lwd = 2)
-rownames(vgs_std_resids) <- c()
+
 shapiro.test(vgs_std_resids$vgs_std_resids)
 ```
 
-Both Normal and Student's-t distribution seem to be quite poor fits because of the very heavy left tail. Massive price falls that the model cannot account for. 
+Strong violation of normality. Heavy left tail. Unlikely that the student's t distribution will be an adequate fit, but let's try anyway.
+
+```{r}
+vgs_returns <- vgs$LogReturn[2:nrow(vgs)]
+vgs_gjrgarch_spec <- ugarchspec(variance.model=list(model="gjrGARCH"), distribution.model="std")
+
+vgs_gjrgarch_fit <-ugarchfit(vgs_returns,spec=vgs_gjrgarch_spec)
+vgs_std_resids <-residuals(vgs_gjrgarch_fit)/vgs_gjrgarch_fit@fit[["sigma"]]
+```
+
+```{r}
+vgs_std_resids <- data.frame(vgs_std_resids)
+rownames(vgs_std_resids) <- c()
+
+hist(vgs_std_resids$vgs_std_resids)
+qqt(vgs_std_resids$vgs_std_resids,df=5.849125)
+qqline(vgs_std_resids, col = "steelblue", lwd = 2)
+
+```
+
+As expected, an inadequate fit, let's use the ghyp distribution.
+
+```{r}
+vgs_returns <- vgs$LogReturn[2:nrow(vgs)]
+vgs_gjrgarch_spec <- ugarchspec(variance.model=list(model="gjrGARCH"), distribution.model="ghyp")
+
+vgs_gjrgarch_fit <-ugarchfit(vgs_returns,spec=vgs_gjrgarch_spec)
+vgs_std_resids <-residuals(vgs_gjrgarch_fit)/vgs_gjrgarch_fit@fit[["sigma"]]
+```
+
+```{r}
+vgs_std_resids <- data.frame(vgs_std_resids)
+rownames(vgs_std_resids) <- c()
+s_resids <-vas_std_resids$vas_std_resids
+
+params <- ghyptransform(mu=mean(s_resids),sigma=sd(s_resids),shape=0.250194,skew=-0.921569,lambda=-3.333675)
+
+s_resids_ghyp <- ghyp.ad(lambda=-3.333675,alpha=params[1,4],delta=params[1,2],beta=params[1,3],mu=params[1,1])
+
+qqghyp(s_resids_ghyp,s_resids,gaussian=FALSE)
+
+```
+
+Mostly underdispersed, but a slightly better fit than the student's t distribution.
+
