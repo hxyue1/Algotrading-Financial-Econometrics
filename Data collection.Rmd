@@ -1,0 +1,19 @@
+---
+title: "Data collection"
+author: "Hong Xiang Yue"
+date: "08/07/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This markdown will show you how to use the AlphaVantage API to get the data we need without having to download CSVs manually.
+
+```{r}
+library(alphavantager)
+av_api_key("RUDBPNS133OPNKY1")
+av_get(symbol="VAF.AX",av_fun="TIME_SERIES_DAILY")
+```
+
