@@ -1,0 +1,200 @@
+---
+title: "Modelling Returns"
+author: "Hong Xiang Yue"
+date: "08/07/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Importing data and EDA
+Importing data from csv. 
+
+Vanguard ETFS:
+- VAF
+- VAP
+- VAS
+- VGS
+
+```{r}
+setwd("~/Desktop/Documents/Self study/Quant Finance/Algotrading/ETFS/Data/Vanguard/")
+vaf <- read.csv("VAF.AX.csv")
+vap <- read.csv("VAP.AX.csv")
+vas <- read.csv("VAS.AX.csv")
+vgs <- read.csv("VGS.AX.csv")
+
+
+```
+#Modelling returns
+
+Deleting rows with null entries
+
+```{r}
+vaf <- vaf[!(vaf$Open=="null"),]
+vap <- vap[!(vap$Open=="null"),]
+vas <- vas[!(vas$Open=="null"),]
+vgs <- vgs[!(vgs$Open=="null"),]
+
+vaf$Close <- as.numeric(levels(vaf$Close))[vaf$Close]
+vap$Close <- as.numeric(levels(vap$Close))[vap$Close]
+vas$Close <- as.numeric(levels(vas$Close))[vas$Close]
+vgs$Close <- as.numeric(levels(vgs$Close))[vgs$Close]
+```
+
+Calculating log returns
+
+```{r}
+lreturns <- function(df){
+  close_prev <- df$Close[1:(nrow(df)-1)]
+  close_today <- df$Close[2:nrow(df)]
+  lret <- log(close_today/close_prev)
+  lret <- c(NA,lret)
+  df$LogReturn <- lret
+  return(df)
+}
+
+vaf <- lreturns(vaf)
+vap <- lreturns(vap)
+vas <- lreturns(vas)
+vgs <- lreturns(vgs)
+```
+
+Testing for autocorrelation in returns
+
+```{r}
+vaf_acf<-acf(vaf$LogReturn[2:nrow(vaf)])
+vap_acf<-acf(vap$LogReturn[2:nrow(vap)])
+vas_acf<-acf(vas$LogReturn[2:nrow(vas)])
+vgs_acf<-acf(vgs$LogReturn[2:nrow(vgs)])
+
+Box.test(vaf$LogReturn[2:nrow(vaf)],type="Ljung",lag=10)
+Box.test(vap$LogReturn[2:nrow(vap)],type="Ljung",lag=10)
+Box.test(vas$LogReturn[2:nrow(vas)],type="Ljung",lag=10)
+Box.test(vgs$LogReturn[2:nrow(vgs)],type="Ljung",lag=10)
+```
+
+Strong autocorrelation in vaf and vap up to the 10th lag. Borderline statistically significant autocorrelation for vas and vgs.
+
+Fitting AIRMAs to the returns
+
+```{r}
+library(forecast)
+vaf_arima <-auto.arima(vaf$LogReturn[2:nrow(vaf)])
+vap_arima <-auto.arima(vap$LogReturn[2:nrow(vap)])
+vas_arima <-auto.arima(vap$LogReturn[2:nrow(vas)])
+vgs_arima <-auto.arima(vap$LogReturn[2:nrow(vgs)])
+```
+
+Setting up functions for rolling forecasts using ARs and ARIMAs
+```{r}
+
+arima_roll_forecast <- function(dependent,train_length,roll_length,arima_dim){
+  predictions <- data.frame()
+  for (i in 1:roll_length){
+    train = dependent[i:(train_length+i-1)]
+    #train_arima <- arima(train, order=arima_dim, transform.pars = TRUE, method="ML")
+    #train_arima <- arima(train, order=arima_dim, method="ML",optim.control = list(maxit = 2000), optim.method="Nelder-Mead")
+    train_arima <- auto.arima(train)
+    onestepf <- predict(train_arima,n.ahead=1)
+    pred <- onestepf$pred[1]
+    predictions <- rbind(predictions,pred)
+  }
+  
+  colnames(predictions) <- ""
+  return(predictions)
+}
+
+ar_roll_forecast <- function(dependent,p,train_length,roll_length){
+  predictions <- data.frame()
+  for (i in 1:roll_length){
+    train = dependent[i:(train_length+i-1)]
+    train_ar <- ar(train, order.max=p)
+    onestepf <- predict(train_ar,n.ahead=1)
+    pred <- onestepf$pred[1]
+    predictions <- rbind(predictions,pred)
+  }
+  
+  colnames(predictions) <- ""
+  return(predictions)
+}
+```
+
+
+Finding optimal training length by looking at RMSE from rolling forecasts. 
+
+```{r}
+dependent = vaf$LogReturn[2:nrow(vaf)]
+vaf_RMSE <- data.frame()
+for (i in seq(100,1500,20)){
+  train_length <- i 
+  vaf_ar_preds <- ar_roll_forecast(dependent,1,train_length,length(dependent)-train_length)
+  vaf_y <- data.frame(cbind(dependent[train_length:(length(dependent)-1)],vaf_ar_preds))
+  colnames(vaf_y) <- c('y','AR')
+  vaf_ar_RMSE <- mean((vaf_y$y-vaf_y$AR)^2)^0.5
+  vaf_RMSE <- rbind(vaf_RMSE,vaf_ar_RMSE)
+}
+```
+Optimal training length is approximately 1200 observations. It may be that more observations would improve rolling forecast RMSE, but we simply "run out" of test observations to evaluate performance on so the actual calculation can be inaccurate. ARIMA rolling forecasts were removed because of optimisation issues. Minimum RMSE is 0.00183, which is lower than the standard deviation of returns 0.00259 suggesting that there is forecastability in the returns ergo, the EMH does not hold for Australian fixed income assets (or at least derivatives comprising of them).
+
+Doing the same for the vap returns
+
+```{r}
+dependent <- vap$LogReturn[2:nrow(vap)]
+train_length <- 100
+vap_arima_preds <- arima_roll_forecast(dependent,train_length,length(dependent)-train_length,c(2,0,1))
+vap_ar_preds <- ar_roll_forecast(dependent,train_length,length(dependent)-train_length)
+
+vap_y <- data.frame(cbind(dependent[train_length:(length(dependent)-1)],vap_arima_preds,vap_ar_preds))
+colnames(vap_y) <- c('y','ARIMA','AR')
+vap_arima_RMSE <- mean((vap_y$y-vap_y$ARIMA)^2)^0.5
+vap_ar_RMSE <- mean((vap_y$y-vap_y$AR)^2)^0.5
+print(vap_arima_RMSE)
+print(vap_ar_RMSE)
+```
+
+```{r}
+dependent <- vap$LogReturn[2:nrow(vap)]
+vap_RMSE <- data.frame()
+for (i in seq(100,1900,100)){
+  train_length <- i 
+  vap_ar_preds <- ar_roll_forecast(dependent,train_length,length(dependent)-train_length)
+  vap_y <- data.frame(cbind(dependent[train_length:(length(dependent)-1)],vap_ar_preds))
+  colnames(vap_y) <- c('y','AR')
+  vap_ar_RMSE <- mean((vap_y$y-vap_y$AR)^2)^0.5
+  vap_RMSE <- rbind(vap_RMSE,vap_ar_RMSE)
+}
+```
+
+Optimal training length is at approximately 1600 observations for a one-step ahead RMSE of 0.00963 which is still higher than the overall standard deviation of returns 0.0095 unfortunately. This suggests that there is very little predictability at all and that the returns may have a constant mean (EMH).
+
+```{r}
+dependent <- vas$LogReturn[2:nrow(vas)]
+vas_RMSE <- data.frame()
+for (i in seq(100,2300,100)){
+  train_length <- i 
+  vas_ar_preds <- ar_roll_forecast(dependent,train_length,length(dependent)-train_length)
+  vas_y <- data.frame(cbind(dependent[train_length:(length(dependent)-1)],vas_ar_preds))
+  colnames(vas_y) <- c('y','AR')
+  vas_ar_RMSE <- mean((vas_y$y-vas_y$AR)^2)^0.5
+  vas_RMSE <- rbind(vas_RMSE,vas_ar_RMSE)
+}
+```
+
+Lowest one-step ahead forecast RMSE is 0.0068 (training length 1900 observations) suggesting that there is predictability in asset returns because the unconditional standard deviation is 0.0091. We can noticeably outperform a constant return model.
+
+```{r}
+dependent <- vgs$LogReturn[2:nrow(vgs)]
+vgs_RMSE <- data.frame()
+for (i in seq(490,520,1)){
+  train_length <- i 
+  vgs_ar_preds <- ar_roll_forecast(dependent,train_length,length(dependent)-train_length)
+  vgs_y <- data.frame(cbind(dependent[train_length:(length(dependent)-1)],vgs_ar_preds))
+  colnames(vgs_y) <- c('y','AR')
+  vgs_ar_RMSE <- mean((vgs_y$y-vgs_y$AR)^2)^0.5
+  vgs_RMSE <- rbind(vgs_RMSE,vgs_ar_RMSE)
+}
+```
+
+Lowest one-step ahead forecast RMSE is 0.0079 which is slightly lower than the unconditional standard deviation of 0.0083. However, for most training lengths, it seems to be above this value suggesting that the improved performance was probably some sort of fluke.
